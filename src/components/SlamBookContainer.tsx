@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronLeft, ChevronRight, RotateCcw, Plus, Image as ImageIcon, Save, Loader2, X, Eraser, PenTool } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { ChevronLeft, ChevronRight, RotateCcw, Plus, Image as ImageIcon, Save, Loader2, X, Eraser, PenTool, Lock, Unlock, Eye, EyeOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import confetti from 'canvas-confetti';
 import { BookCover } from './BookCover';
@@ -33,6 +34,8 @@ export interface FriendEntry {
   photoUrl?: string; 
   signature?: string;
   stickers: string[];
+  isLocked?: boolean;
+  password?: string;
 }
 
 const EMPTY_ENTRY: FriendEntry = {
@@ -56,7 +59,9 @@ const EMPTY_ENTRY: FriendEntry = {
   message: '',
   photoUrl: undefined,
   signature: undefined,
-  stickers: ['✨', '🎈']
+  stickers: ['✨', '🎈'],
+  isLocked: false,
+  password: ''
 };
 
 interface SlamBookContainerProps {
@@ -72,8 +77,16 @@ const SignaturePad: React.FC<{ value?: string; onChange: (val: string) => void }
   useEffect(() => {
     const canvas = canvasRef.current;
     if (canvas) {
+      // Handle high DPI displays
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      
       const context = canvas.getContext('2d');
       if (context) {
+        context.scale(dpr, dpr);
         context.lineWidth = 2;
         context.lineCap = 'round';
         context.strokeStyle = '#1e293b'; // slate-800
@@ -82,7 +95,7 @@ const SignaturePad: React.FC<{ value?: string; onChange: (val: string) => void }
         // Load existing signature if present
         if (value) {
            const img = new Image();
-           img.onload = () => context.drawImage(img, 0, 0);
+           img.onload = () => context.drawImage(img, 0, 0, rect.width, rect.height);
            img.src = value;
         }
       }
@@ -135,11 +148,9 @@ const SignaturePad: React.FC<{ value?: string; onChange: (val: string) => void }
   };
 
   return (
-    <div className="relative group/sig border-2 border-dashed border-slate-300 rounded bg-white/50 hover:border-indigo-300 transition-colors">
+    <div className="relative group/sig border-2 border-dashed border-slate-300 rounded bg-white/50 hover:border-indigo-300 transition-colors w-full h-20">
       <canvas
         ref={canvasRef}
-        width={250}
-        height={80}
         onMouseDown={startDrawing}
         onMouseUp={stopDrawing}
         onMouseMove={draw}
@@ -147,7 +158,8 @@ const SignaturePad: React.FC<{ value?: string; onChange: (val: string) => void }
         onTouchStart={startDrawing}
         onTouchEnd={stopDrawing}
         onTouchMove={draw}
-        className="touch-none cursor-crosshair w-full h-full"
+        className="touch-none cursor-crosshair w-full h-full block"
+        style={{ width: '100%', height: '100%' }}
       />
       <div className="absolute top-1 right-1 opacity-0 group-hover/sig:opacity-100 transition-opacity">
          <button onClick={clear} className="p-1 bg-red-100 text-red-600 rounded-full hover:bg-red-200" title="Clear Signature">
@@ -163,19 +175,62 @@ const SignaturePad: React.FC<{ value?: string; onChange: (val: string) => void }
   );
 };
 
+// Lock Screen Placeholder Component
+const LockScreen: React.FC<{ onOpenUnlock: () => void }> = ({ onOpenUnlock }) => {
+    return (
+        <div 
+          className="h-full w-full flex flex-col items-center justify-center p-8 text-center relative z-20 overflow-hidden"
+          style={{
+            background: 'repeating-linear-gradient(45deg, #f1f5f9, #f1f5f9 10px, #cbd5e1 10px, #cbd5e1 20px)'
+          }}
+        >
+             <div className="absolute inset-0 bg-white/60 backdrop-blur-[2px]" />
+             
+             <div className="relative z-30 flex flex-col items-center bg-white p-6 rounded-xl shadow-2xl border-4 border-slate-200 max-w-xs w-full">
+                <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-4 border-2 border-slate-300 shadow-inner">
+                    <Lock size={32} className="text-slate-400" />
+                </div>
+                <h3 className="font-typewriter text-xl text-slate-700 font-bold mb-2 uppercase tracking-widest">Locked Page</h3>
+                <p className="font-handwriting text-slate-500 mb-6 text-lg leading-tight">This page is password protected.</p>
+                
+                <button 
+                    onClick={onOpenUnlock}
+                    className="mt-2 px-6 py-3 bg-slate-800 text-white font-typewriter text-sm font-bold rounded shadow hover:bg-slate-700 transition-all active:scale-95 uppercase tracking-wider flex items-center gap-2"
+                >
+                    <Unlock size={16} />
+                    Enter Password
+                </button>
+             </div>
+        </div>
+    );
+};
+
 // Editable Content Component
 const EditablePageContent: React.FC<{ 
   entry: FriendEntry; 
   side: 'left' | 'right'; 
-  onUpdate: (updatedEntry: FriendEntry) => void;
-  onSave: () => void;
-  isSaving: boolean;
+  onUpdate: (updatedEntry: FriendEntry) => void; 
+  onSave: () => void; 
+  isSaving: boolean; 
   onPhotoClick?: (url: string) => void;
-}> = ({ entry, side, onUpdate, onSave, isSaving, onPhotoClick }) => {
+  isUnlocked: boolean;
+  onOpenUnlockModal: () => void;
+  onOpenLockModal: () => void;
+  onRemoveLock: () => void;
+}> = ({ entry, side, onUpdate, onSave, isSaving, onPhotoClick, isUnlocked, onOpenUnlockModal, onOpenLockModal, onRemoveLock }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
 
   if (!entry) return <div className="h-full flex items-center justify-center text-slate-400 font-typewriter">Empty Page</div>;
+
+  // Check if locked
+  if (entry.isLocked && !isUnlocked) {
+      return (
+        <div className="h-full w-full relative">
+            <LockScreen onOpenUnlock={onOpenUnlockModal} />
+        </div>
+      );
+  }
 
   const handleChange = (field: keyof FriendEntry, value: string) => {
     onUpdate({ ...entry, [field]: value });
@@ -227,7 +282,7 @@ const EditablePageContent: React.FC<{
 
   if (side === 'left') {
     return (
-      <div className="h-full flex flex-col relative">
+      <div className="h-full flex flex-col relative w-full">
         <CoffeeStain className="bottom-0 left-0 w-32 h-32 opacity-5" />
         
         {/* Header Section */}
@@ -237,36 +292,36 @@ const EditablePageContent: React.FC<{
           
           <div className="flex flex-col gap-1">
             <div className="flex items-baseline gap-2 border-b-2 border-slate-800 pb-1 border-dashed relative">
-               <span className="font-typewriter font-bold text-slate-500 text-sm uppercase tracking-widest shrink-0">Name:</span>
+               <span className="font-typewriter font-bold text-slate-500 text-xs md:text-sm uppercase tracking-widest shrink-0">Name:</span>
                <input
                 type="text"
                 value={entry.name}
                 onChange={(e) => handleChange('name', e.target.value)}
-                className="font-handwriting text-3xl font-bold text-indigo-700 bg-transparent border-none focus:outline-none w-full transform -rotate-1 placeholder-indigo-300/50"
+                className="font-handwriting text-2xl md:text-3xl font-bold text-indigo-700 bg-transparent border-none focus:outline-none w-full transform -rotate-1 placeholder-indigo-300/50"
                 placeholder="Name Here"
               />
             </div>
             
-            <div className="flex justify-between items-start mt-2">
-               <div className="flex items-center gap-2 flex-1">
-                  <span className="font-typewriter text-slate-500 text-xs uppercase tracking-wide">AKA:</span>
+            <div className="flex flex-col md:flex-row md:justify-between items-start mt-2 gap-2 md:gap-0">
+               <div className="flex items-center gap-2 w-full md:flex-1">
+                  <span className="font-typewriter text-slate-500 text-[10px] md:text-xs uppercase tracking-wide">AKA:</span>
                   <input
                     type="text"
                     value={entry.nickname}
                     onChange={(e) => handleChange('nickname', e.target.value)}
                     placeholder="Nickname"
-                    className="font-handwriting text-xl text-slate-600 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-indigo-400 focus:outline-none w-full"
+                    className="font-handwriting text-lg md:text-xl text-slate-600 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-indigo-400 focus:outline-none w-full"
                   />
                </div>
                
-               <div className="ml-4 transform rotate-2">
-                  <span className="font-typewriter text-[10px] text-slate-400 block text-center mb-1">ZODIAC</span>
+               <div className="ml-4 transform rotate-2 self-end md:self-auto">
+                  <span className="font-typewriter text-[8px] md:text-[10px] text-slate-400 block text-center mb-1">ZODIAC</span>
                   <input
                     type="text"
                     value={entry.zodiac}
                     onChange={(e) => handleChange('zodiac', e.target.value)}
                     placeholder="Sign"
-                    className="font-handwriting px-3 py-1 bg-white border-2 border-slate-200 rounded-sm text-purple-700 font-bold shadow-sm w-24 text-center focus:outline-none focus:border-purple-300"
+                    className="font-handwriting px-2 md:px-3 py-1 bg-white border-2 border-slate-200 rounded-sm text-purple-700 font-bold shadow-sm w-20 md:w-24 text-center focus:outline-none focus:border-purple-300 text-sm md:text-base"
                   />
                </div>
             </div>
@@ -276,7 +331,7 @@ const EditablePageContent: React.FC<{
         {/* Scrapbook Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4 relative z-10">
           {/* Note Card 1 */}
-          <div className="bg-[#fff9c4] p-4 shadow-sm relative transform -rotate-1" style={{ clipPath: 'polygon(0% 0%, 100% 2%, 98% 100%, 2% 98%)' }}>
+          <div className="bg-[#fff9c4] p-3 md:p-4 shadow-sm relative transform -rotate-1" style={{ clipPath: 'polygon(0% 0%, 100% 2%, 98% 100%, 2% 98%)' }}>
              <Tape className="-top-3 left-1/2 -translate-x-1/2 rotate-2" />
              <h4 className="font-typewriter font-bold text-slate-700 mb-2 text-xs uppercase border-b border-slate-300 pb-1">Favorites</h4>
              <ul className="space-y-1">
@@ -287,7 +342,7 @@ const EditablePageContent: React.FC<{
                      type="text"
                      value={(entry.favorites as any)[item]}
                      onChange={(e) => handleFavoriteChange(item as any, e.target.value)}
-                     className="font-handwriting text-lg text-indigo-800 bg-transparent border-b border-slate-300/50 focus:border-indigo-400 focus:outline-none w-full -mt-1"
+                     className="font-handwriting text-base md:text-lg text-indigo-800 bg-transparent border-b border-slate-300/50 focus:border-indigo-400 focus:outline-none w-full -mt-1"
                    />
                  </li>
                ))}
@@ -295,7 +350,7 @@ const EditablePageContent: React.FC<{
           </div>
           
           {/* Note Card 2 */}
-          <div className="bg-[#e3f2fd] p-4 shadow-sm relative transform rotate-1" style={{ clipPath: 'polygon(2% 0%, 98% 1%, 100% 99%, 0% 100%)' }}>
+          <div className="bg-[#e3f2fd] p-3 md:p-4 shadow-sm relative transform rotate-1" style={{ clipPath: 'polygon(2% 0%, 98% 1%, 100% 99%, 0% 100%)' }}>
              <Tape className="-top-3 right-4 -rotate-3" />
              <h4 className="font-typewriter font-bold text-slate-700 mb-2 text-xs uppercase border-b border-slate-300 pb-1">Dreams</h4>
              <div className="space-y-3">
@@ -305,7 +360,7 @@ const EditablePageContent: React.FC<{
                     type="text"
                     value={entry.futureGoal}
                     onChange={(e) => handleChange('futureGoal', e.target.value)}
-                    className="font-handwriting text-lg text-indigo-800 bg-transparent border-b border-slate-300/50 focus:border-indigo-400 focus:outline-none w-full"
+                    className="font-handwriting text-base md:text-lg text-indigo-800 bg-transparent border-b border-slate-300/50 focus:border-indigo-400 focus:outline-none w-full"
                   />
                </div>
                <div>
@@ -314,7 +369,7 @@ const EditablePageContent: React.FC<{
                     type="text"
                     value={entry.dreamVacation}
                     onChange={(e) => handleChange('dreamVacation', e.target.value)}
-                    className="font-handwriting text-lg text-indigo-800 bg-transparent border-b border-slate-300/50 focus:border-indigo-400 focus:outline-none w-full"
+                    className="font-handwriting text-base md:text-lg text-indigo-800 bg-transparent border-b border-slate-300/50 focus:border-indigo-400 focus:outline-none w-full"
                   />
                </div>
              </div>
@@ -329,7 +384,7 @@ const EditablePageContent: React.FC<{
              <textarea
                value={entry.schoolMemory}
                onChange={(e) => handleChange('schoolMemory', e.target.value)}
-               className="w-full bg-transparent border-none focus:outline-none font-handwriting text-xl text-slate-800 resize-none overflow-hidden leading-relaxed"
+               className="w-full bg-transparent border-none focus:outline-none font-handwriting text-lg md:text-xl text-slate-800 resize-none overflow-hidden leading-relaxed"
                rows={2}
                style={{ backgroundImage: 'repeating-linear-gradient(transparent, transparent 31px, #e5e7eb 32px)', lineHeight: '32px' }}
              />
@@ -349,16 +404,16 @@ const EditablePageContent: React.FC<{
 
   // Right Side Content
   return (
-    <div className="h-full flex flex-col relative">
+    <div className="h-full flex flex-col relative w-full">
        <CoffeeStain className="top-10 right-10 w-48 h-48 opacity-5 rotate-90" />
       
       {/* Title */}
-      <h3 className="font-typewriter font-bold text-slate-500 mb-4 transform rotate-1 text-center border-b-4 border-double border-slate-200 inline-block mx-auto px-8 py-1">
+      <h3 className="font-typewriter font-bold text-slate-500 mb-4 transform rotate-1 text-center border-b-4 border-double border-slate-200 inline-block mx-auto px-8 py-1 text-sm md:text-base">
         MESSAGE BOARD
       </h3>
 
       {/* New Fields Section */}
-      <div className="grid grid-cols-2 gap-3 mb-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
           <div className="bg-pink-50 p-2 rounded border border-pink-100 relative">
              <span className="block text-[9px] font-typewriter text-pink-400 uppercase tracking-wider mb-1">What I observed in you:</span>
              <textarea
@@ -377,30 +432,30 @@ const EditablePageContent: React.FC<{
           </div>
       </div>
 
-      <div className="flex-1 relative group p-4 border-2 border-slate-200 rounded-sm bg-white/50 mb-2">
+      <div className="flex-1 relative group p-4 border-2 border-slate-200 rounded-sm bg-white/50 mb-2 min-h-[150px]">
         <textarea
           value={entry.message}
           onChange={(e) => handleChange('message', e.target.value)}
           placeholder="Leave a note..."
-          className="w-full h-full bg-transparent border-none focus:outline-none font-handwriting text-xl leading-relaxed text-indigo-900 drop-shadow-sm resize-none relative z-10"
+          className="w-full h-full bg-transparent border-none focus:outline-none font-handwriting text-lg md:text-xl leading-relaxed text-indigo-900 drop-shadow-sm resize-none relative z-10"
           style={{ backgroundImage: 'repeating-linear-gradient(transparent, transparent 39px, #dbeafe 40px)', lineHeight: '40px', paddingTop: '4px' }}
         />
 
         {/* Stickers Area */}
-        <div className="absolute bottom-4 left-4 flex gap-4 z-20">
+        <div className="absolute bottom-4 left-4 flex gap-2 md:gap-4 z-20 flex-wrap">
           {entry.stickers.map((emoji, idx) => (
             <Sticker key={idx} rotation={idx % 2 === 0 ? 10 : -10} className="bg-white border-2 border-white shadow-md">
-              <span className="text-3xl">{emoji}</span>
+              <span className="text-xl md:text-3xl">{emoji}</span>
             </Sticker>
           ))}
         </div>
       </div>
 
       {/* Bottom Controls */}
-      <div className="mt-2 pt-2 flex justify-between items-end px-1 gap-2">
-        <div className="flex flex-col gap-3 flex-1">
+      <div className="mt-2 pt-2 flex flex-col md:flex-row justify-between items-end px-1 gap-2">
+        <div className="flex flex-col gap-3 flex-1 w-full md:w-auto">
            {/* Signature Block */}
-           <div className="flex flex-col gap-1 w-full max-w-[200px]">
+           <div className="flex flex-col gap-1 w-full md:max-w-[200px]">
               <div className="flex items-center gap-2">
                   <span className="text-[10px] font-typewriter text-slate-400 uppercase">Signed:</span>
                   <PenTool size={10} className="text-slate-300" />
@@ -411,21 +466,42 @@ const EditablePageContent: React.FC<{
               />
            </div>
            
-           <div className="flex items-center justify-between">
+           <div className="flex items-center justify-between w-full">
               <span className="text-[10px] font-typewriter text-slate-400">DATE: {new Date().toLocaleDateString()}</span>
-               <button 
-                 onClick={onSave}
-                 disabled={isSaving}
-                 className="px-3 py-1.5 bg-green-700 text-white rounded-sm shadow-md hover:bg-green-600 font-typewriter text-[10px] font-bold flex items-center gap-2 transition-transform hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed border border-green-800"
-               >
-                 {isSaving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
-                 SAVE
-               </button>
+               
+               <div className="flex items-center gap-2">
+                   {/* Hide/Lock Button */}
+                   <button
+                        onClick={() => {
+                            if (entry.isLocked) {
+                                if (confirm("Remove password protection?")) {
+                                    onRemoveLock();
+                                }
+                            } else {
+                                onOpenLockModal();
+                            }
+                        }}
+                        className={`px-3 py-1.5 ${entry.isLocked ? 'bg-slate-700' : 'bg-slate-200 text-slate-700 hover:bg-slate-300'} text-white rounded-sm shadow-md font-typewriter text-[10px] font-bold flex items-center gap-2 transition-transform hover:scale-105 active:scale-95`}
+                        title={entry.isLocked ? "Page Hidden (Click to Unhide)" : "Hide Page"}
+                   >
+                       {entry.isLocked ? <EyeOff size={12} /> : <Eye size={12} />}
+                       <span className="hidden md:inline">{entry.isLocked ? "HIDDEN" : "HIDE"}</span>
+                   </button>
+
+                   <button 
+                     onClick={onSave}
+                     disabled={isSaving}
+                     className="px-3 py-1.5 bg-green-700 text-white rounded-sm shadow-md hover:bg-green-600 font-typewriter text-[10px] font-bold flex items-center gap-2 transition-transform hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed border border-green-800"
+                   >
+                     {isSaving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                     SAVE
+                   </button>
+               </div>
            </div>
         </div>
         
-        {/* Polaroid Photo Upload */}
-        <div className="relative group/photo transform -rotate-3 hover:rotate-0 transition-transform duration-300 shrink-0">
+        {/* Polaroid Photo Upload - Hidden on really small screens if needed, or scaled */}
+        <div className="relative group/photo transform -rotate-3 hover:rotate-0 transition-transform duration-300 shrink-0 self-end md:self-auto">
           <Tape className="-top-3 left-1/2 -translate-x-1/2 w-16 opacity-80 h-6" />
           <input 
             type="file" 
@@ -442,7 +518,7 @@ const EditablePageContent: React.FC<{
                 !isUploading && fileInputRef.current?.click();
               }
             }}
-            className="bg-white p-1 pb-6 shadow-lg cursor-pointer w-24 h-28 flex items-center justify-center border border-slate-100"
+            className="bg-white p-1 pb-6 shadow-lg cursor-pointer w-20 h-24 md:w-24 md:h-28 flex items-center justify-center border border-slate-100"
           >
             <div className="bg-slate-100 w-full h-full shadow-inner overflow-hidden flex items-center justify-center relative">
                {isUploading ? (
@@ -486,6 +562,16 @@ export const SlamBookContainer: React.FC<SlamBookContainerProps> = ({ coverImage
   
   const [originalNicknames, setOriginalNicknames] = useState<Record<string, string>>({});
   const [savingState, setSavingState] = useState<Record<string, boolean>>({});
+  const [unlockedEntries, setUnlockedEntries] = useState<Set<string>>(new Set());
+
+  // Mobile View State
+  const [mobileSide, setMobileSide] = useState<'left' | 'right'>('left');
+  const [isMobile, setIsMobile] = useState(false);
+
+  // Lock/Unlock Modal State
+  const [lockModal, setLockModal] = useState<{ isOpen: boolean; entryIndex: number | null }>({ isOpen: false, entryIndex: null });
+  const [unlockModal, setUnlockModal] = useState<{ isOpen: boolean; entryId: string | null }>({ isOpen: false, entryId: null });
+  const [passwordInput, setPasswordInput] = useState('');
 
   // Lightbox State
   const [lightboxPhoto, setLightboxPhoto] = useState<string | null>(null);
@@ -498,6 +584,10 @@ export const SlamBookContainer: React.FC<SlamBookContainerProps> = ({ coverImage
 
   useEffect(() => {
     fetchEntries();
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
   const fetchEntries = async () => {
@@ -528,6 +618,7 @@ export const SlamBookContainer: React.FC<SlamBookContainerProps> = ({ coverImage
       setCurrentSpread(0);
       setDirection(null);
       setIsAnimating(false);
+      setMobileSide('left');
     }
   }, [isOpen]);
 
@@ -557,16 +648,44 @@ export const SlamBookContainer: React.FC<SlamBookContainerProps> = ({ coverImage
   };
 
   const handleNext = () => {
-    if (currentSpread < entries.length - 1 && !isAnimating) {
-      setDirection('next');
-      setIsAnimating(true);
+    if (isAnimating) return;
+
+    if (isMobile) {
+        if (mobileSide === 'left') {
+            setMobileSide('right');
+        } else {
+            if (currentSpread < entries.length - 1) {
+                setDirection('next');
+                setIsAnimating(true);
+                setMobileSide('left');
+            }
+        }
+    } else {
+        if (currentSpread < entries.length - 1) {
+            setDirection('next');
+            setIsAnimating(true);
+        }
     }
   };
 
   const handlePrev = () => {
-    if (currentSpread > 0 && !isAnimating) {
-      setDirection('prev');
-      setIsAnimating(true);
+    if (isAnimating) return;
+
+    if (isMobile) {
+        if (mobileSide === 'right') {
+            setMobileSide('left');
+        } else {
+            if (currentSpread > 0) {
+                setDirection('prev');
+                setIsAnimating(true);
+                setMobileSide('right');
+            }
+        }
+    } else {
+        if (currentSpread > 0) {
+            setDirection('prev');
+            setIsAnimating(true);
+        }
     }
   };
 
@@ -576,6 +695,7 @@ export const SlamBookContainer: React.FC<SlamBookContainerProps> = ({ coverImage
     setEntries([...entries, newEntry]);
     setTimeout(() => {
       setCurrentSpread(entries.length); 
+      if (isMobile) setMobileSide('left');
     }, 0);
   };
 
@@ -585,7 +705,10 @@ export const SlamBookContainer: React.FC<SlamBookContainerProps> = ({ coverImage
     setEntries(newEntries);
   };
 
-  const handleSaveEntry = async (entry: FriendEntry) => {
+  const handleSaveEntry = async (index: number) => {
+    const entry = entries[index];
+    if (!entry) return;
+
     if (!entry.nickname) {
       toast.error("Nickname is required!");
       return;
@@ -622,6 +745,20 @@ export const SlamBookContainer: React.FC<SlamBookContainerProps> = ({ coverImage
 
       setOriginalNicknames(prev => ({ ...prev, [entry.id]: entry.nickname }));
 
+      // Prompt to lock page after save if not locked
+      setTimeout(() => {
+        if (!entry.isLocked) {
+             setLockModal({ isOpen: true, entryIndex: index });
+        } else {
+             // If already locked, re-lock it for security
+             setUnlockedEntries(prev => {
+                const next = new Set(prev);
+                next.delete(entry.id);
+                return next;
+             });
+        }
+      }, 1000);
+
     } catch (err: any) {
       console.error(err);
       toast.error(err.message);
@@ -640,6 +777,49 @@ export const SlamBookContainer: React.FC<SlamBookContainerProps> = ({ coverImage
     setDirection(null);
   };
 
+  const handleUnlockSubmit = () => {
+      const entryId = unlockModal.entryId;
+      if (!entryId) return;
+
+      const entry = entries.find(e => e.id === entryId);
+      if (entry && entry.password === passwordInput) {
+          setUnlockedEntries(prev => new Set(prev).add(entryId));
+          toast.success("Page unlocked!");
+          setUnlockModal({ isOpen: false, entryId: null });
+          setPasswordInput('');
+      } else {
+          toast.error("Incorrect password!");
+      }
+  };
+
+  const handleLockSubmit = () => {
+    if (!passwordInput.trim()) {
+        toast.error("Password cannot be empty");
+        return;
+    }
+    if (lockModal.entryIndex !== null) {
+        const index = lockModal.entryIndex;
+        const updated = { ...entries[index], isLocked: true, password: passwordInput };
+        handleUpdateEntry(index, updated);
+        
+        setUnlockedEntries(prev => {
+            const next = new Set(prev);
+            next.delete(updated.id);
+            return next;
+        });
+        
+        toast.success("Page hidden!");
+    }
+    setLockModal({ isOpen: false, entryIndex: null });
+    setPasswordInput('');
+  };
+  
+  const handleRemoveLock = (index: number) => {
+      const updated = { ...entries[index], isLocked: false, password: '' };
+      handleUpdateEntry(index, updated);
+      toast.success("Page unhidden");
+  };
+
   const activeIndex = currentSpread;
   const nextIndex = direction === 'next' ? activeIndex + 1 : activeIndex - 1;
   
@@ -651,9 +831,23 @@ export const SlamBookContainer: React.FC<SlamBookContainerProps> = ({ coverImage
         entry={entry} 
         side={side} 
         onUpdate={(updated) => handleUpdateEntry(index, updated)} 
-        onSave={() => handleSaveEntry(entry)}
+        onSave={() => handleSaveEntry(index)}
         isSaving={savingState[entry.id] || false}
         onPhotoClick={(url) => setLightboxPhoto(url)}
+        isUnlocked={unlockedEntries.has(entry.id)}
+        onUnlock={(pwd) => {
+            // Deprecated direct call, now handled via modal
+            return false;
+        }}
+        onOpenUnlockModal={() => {
+            setUnlockModal({ isOpen: true, entryId: entry.id });
+            setPasswordInput('');
+        }}
+        onOpenLockModal={() => {
+            setLockModal({ isOpen: true, entryIndex: index });
+            setPasswordInput('');
+        }}
+        onRemoveLock={() => handleRemoveLock(index)}
       />
     );
   };
@@ -686,7 +880,7 @@ export const SlamBookContainer: React.FC<SlamBookContainerProps> = ({ coverImage
   }
 
   return (
-    <div className="w-full h-full flex items-center justify-center p-4">
+    <div className="w-full h-full flex items-center justify-center md:p-4">
         {/* Lightbox Modal */}
         <AnimatePresence>
           {lightboxPhoto && (
@@ -723,21 +917,91 @@ export const SlamBookContainer: React.FC<SlamBookContainerProps> = ({ coverImage
           )}
         </AnimatePresence>
 
+        {/* Lock / Unlock Password Modal - Using Portal */}
+        {(lockModal.isOpen || unlockModal.isOpen) && createPortal(
+            <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+                <div 
+                    className="bg-white p-6 rounded-xl shadow-2xl w-full max-w-sm border-2 border-slate-200 relative transform transition-all scale-100"
+                    onClick={(e) => e.stopPropagation()}
+                >
+                    <button 
+                        onClick={() => {
+                            setLockModal({ isOpen: false, entryIndex: null });
+                            setUnlockModal({ isOpen: false, entryId: null });
+                            setPasswordInput('');
+                        }}
+                        className="absolute top-3 right-3 text-slate-400 hover:text-slate-600 p-1 bg-slate-100 rounded-full"
+                    >
+                        <X size={16} />
+                    </button>
+                    <div className="flex flex-col items-center mb-4">
+                            <div className="bg-indigo-100 p-3 rounded-full mb-2">
+                            <Lock className="text-indigo-600" size={24} />
+                            </div>
+                            <h4 className="font-typewriter font-bold text-xl text-slate-800">
+                            {lockModal.isOpen ? 'Protect Page' : 'Unlock Page'}
+                            </h4>
+                            {/* Show Name */}
+                            {(lockModal.entryIndex !== null && entries[lockModal.entryIndex]?.name) && (
+                                <p className="font-handwriting text-indigo-600 text-lg font-bold mt-1">
+                                    {entries[lockModal.entryIndex].name}'s Page
+                                </p>
+                            )}
+                            {(unlockModal.entryId !== null && entries.find(e => e.id === unlockModal.entryId)?.name) && (
+                                <p className="font-handwriting text-indigo-600 text-lg font-bold mt-1">
+                                    {entries.find(e => e.id === unlockModal.entryId)?.name}'s Page
+                                </p>
+                            )}
+                            
+                            <p className="text-sm text-slate-500 font-handwriting mt-1 text-center">
+                            {lockModal.isOpen 
+                                ? 'Set a password to hide this page.' 
+                                : 'Enter the password to view this page.'}
+                            </p>
+                    </div>
+                    
+                    <input 
+                        type="password"
+                        value={passwordInput}
+                        onChange={(e) => setPasswordInput(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && (lockModal.isOpen ? handleLockSubmit() : handleUnlockSubmit())}
+                        placeholder={lockModal.isOpen ? "Enter a secret password" : "Enter password"}
+                        className="w-full bg-slate-50 border-2 border-slate-200 rounded-md py-3 px-4 mb-4 focus:outline-none focus:border-indigo-500 focus:bg-white font-typewriter text-center text-lg transition-colors"
+                        autoFocus
+                    />
+                    
+                    <button 
+                        onClick={lockModal.isOpen ? handleLockSubmit : handleUnlockSubmit}
+                        className="w-full bg-indigo-600 text-white py-3 rounded-md shadow-lg hover:bg-indigo-700 font-bold text-sm uppercase tracking-wider transform transition-transform active:scale-95"
+                    >
+                        {lockModal.isOpen ? 'Hide Page' : 'Unlock Page'}
+                    </button>
+                </div>
+            </div>,
+            document.body
+        )}
+
         {!isOpen ? (
-          <div className="w-full flex justify-center animate-book-appear">
+          <div className="w-full flex justify-center animate-book-appear p-4">
             <BookCover onOpen={() => setIsOpen(true)} coverImage={coverImage} />
           </div>
         ) : (
           <div 
-             className="relative w-full max-w-5xl aspect-[3/2] md:aspect-[2/1.4] animate-book-appear"
+             className="relative w-full md:max-w-5xl h-full md:h-auto md:aspect-[2/1.4] animate-book-appear"
              onTouchStart={onTouchStart}
              onTouchMove={onTouchMove}
              onTouchEnd={onTouchEnd}
           >
              
              {/* Main Book Structure */}
-            <div className="relative w-full h-full perspective-1500">
-               <div className="absolute inset-0 bg-[#2a1a10] rounded-lg shadow-2xl flex items-center justify-center">
+            <div className="relative w-full h-full md:perspective-1500 flex flex-col md:block">
+               {/* Mobile Background */}
+               <div className="absolute inset-0 bg-[#2a1a10] rounded-lg shadow-2xl flex items-center justify-center md:hidden">
+                  <div className="absolute inset-1 bg-[#3d2315] rounded-lg" />
+               </div>
+
+               {/* Desktop Background */}
+               <div className="absolute inset-0 bg-[#2a1a10] rounded-lg shadow-2xl items-center justify-center hidden md:flex">
                   <div className="absolute inset-0 bg-[#3d2315] rounded-lg" />
                </div>
 
@@ -749,58 +1013,69 @@ export const SlamBookContainer: React.FC<SlamBookContainerProps> = ({ coverImage
                     </div>
                  </div>
                ) : (
-                 <div className="absolute inset-2 flex transform-style-3d">
-                   <div className="flex-1 relative z-0">
-                      <BookPage pageNumber={direction === 'prev' ? (nextIndex * 2) + 1 : (activeIndex * 2) + 1} side="left">
-                        {staticLeftContent}
+                 <div className="absolute inset-2 flex flex-col md:flex-row transform-style-3d">
+                   
+                   {/* Mobile View: Single Page */}
+                   <div className="flex-1 relative z-0 md:hidden h-full">
+                      <BookPage pageNumber={(activeIndex * 2) + (mobileSide === 'left' ? 1 : 2)} side={mobileSide}>
+                          {renderPage(activeIndex, mobileSide)}
                       </BookPage>
                    </div>
 
-                   <div className="w-0 relative z-10 border-l border-slate-300" />
+                   {/* Desktop View: Double Page Spread */}
+                   <div className="hidden md:contents">
+                       <div className="flex-1 relative z-0">
+                          <BookPage pageNumber={direction === 'prev' ? (nextIndex * 2) + 1 : (activeIndex * 2) + 1} side="left">
+                            {staticLeftContent}
+                          </BookPage>
+                       </div>
 
-                   <div className="flex-1 relative z-0">
-                      <BookPage pageNumber={direction === 'next' ? (nextIndex * 2) + 2 : (activeIndex * 2) + 2} side="right">
-                        {staticRightContent}
-                      </BookPage>
+                       <div className="w-0 relative z-10 border-l border-slate-300" />
+
+                       <div className="flex-1 relative z-0">
+                          <BookPage pageNumber={direction === 'next' ? (nextIndex * 2) + 2 : (activeIndex * 2) + 2} side="right">
+                            {staticRightContent}
+                          </BookPage>
+                       </div>
+
+                       {isAnimating && (
+                         <div 
+                            className={`absolute left-1/2 top-0 bottom-0 w-1/2 transform-style-3d origin-left ${animationClass}`}
+                            onAnimationEnd={onAnimationEnd}
+                         >
+                            <div className="absolute inset-0 backface-hidden z-20">
+                               <BookPage pageNumber={direction === 'prev' ? (nextIndex * 2) + 2 : (activeIndex * 2) + 2} side="right">
+                                  {flipperFrontContent}
+                                  <div className="absolute inset-0 bg-gradient-to-l from-black/5 to-transparent pointer-events-none" />
+                               </BookPage>
+                            </div>
+
+                            <div className="absolute inset-0 backface-hidden rotate-y-180 z-20">
+                               <BookPage pageNumber={direction === 'next' ? (nextIndex * 2) + 1 : (activeIndex * 2) + 1} side="left">
+                                  {flipperBackContent}
+                                  <div className="absolute inset-0 bg-gradient-to-r from-black/5 to-transparent pointer-events-none" />
+                               </BookPage>
+                            </div>
+                         </div>
+                       )}
                    </div>
-
-                   {isAnimating && (
-                     <div 
-                        className={`absolute left-1/2 top-0 bottom-0 w-1/2 transform-style-3d origin-left ${animationClass}`}
-                        onAnimationEnd={onAnimationEnd}
-                     >
-                        <div className="absolute inset-0 backface-hidden z-20">
-                           <BookPage pageNumber={direction === 'prev' ? (nextIndex * 2) + 2 : (activeIndex * 2) + 2} side="right">
-                              {flipperFrontContent}
-                              <div className="absolute inset-0 bg-gradient-to-l from-black/5 to-transparent pointer-events-none" />
-                           </BookPage>
-                        </div>
-
-                        <div className="absolute inset-0 backface-hidden rotate-y-180 z-20">
-                           <BookPage pageNumber={direction === 'next' ? (nextIndex * 2) + 1 : (activeIndex * 2) + 1} side="left">
-                              {flipperBackContent}
-                              <div className="absolute inset-0 bg-gradient-to-r from-black/5 to-transparent pointer-events-none" />
-                           </BookPage>
-                        </div>
-                     </div>
-                   )}
                  </div>
                )}
             </div>
 
             {/* Controls */}
-            <div className="absolute -bottom-16 w-full flex justify-between items-center px-4 z-50">
-               <div className="flex items-center gap-2">
+            <div className="absolute bottom-4 right-4 md:-bottom-16 w-full flex justify-between items-center px-4 z-50 pointer-events-none">
+               <div className="pointer-events-auto">
                  <button 
                    onClick={handlePrev} 
-                   disabled={currentSpread === 0 || isAnimating || loading}
-                   className={`p-3 rounded-full bg-white shadow-lg text-slate-700 transition-all duration-200 ${currentSpread === 0 || isAnimating || loading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-50 hover:scale-110 active:scale-95'}`}
+                   disabled={(currentSpread === 0 && mobileSide === 'left') || isAnimating || loading}
+                   className={`p-3 rounded-full bg-white shadow-lg text-slate-700 transition-all duration-200 ${(currentSpread === 0 && mobileSide === 'left') || isAnimating || loading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-50 hover:scale-110 active:scale-95'}`}
                  >
                    <ChevronLeft size={24} />
                  </button>
                </div>
 
-               <div className="flex items-center gap-4">
+               <div className="hidden md:flex items-center gap-4 pointer-events-auto">
                   <button 
                     onClick={handleAddPage}
                     disabled={loading}
@@ -817,11 +1092,21 @@ export const SlamBookContainer: React.FC<SlamBookContainerProps> = ({ coverImage
                   </button>
                </div>
 
-               <div className="flex items-center gap-2">
+               {/* Mobile Only Center Controls */}
+               <div className="flex md:hidden items-center gap-2 pointer-events-auto pointer-events-auto bg-white/90 backdrop-blur-sm p-1 rounded-full shadow-lg">
+                    <button onClick={handleAddPage} className="p-2 text-indigo-600 rounded-full hover:bg-indigo-50">
+                        <Plus size={20} />
+                    </button>
+                    <button onClick={() => setIsOpen(false)} className="p-2 text-slate-600 rounded-full hover:bg-slate-50">
+                        <RotateCcw size={18} />
+                    </button>
+               </div>
+
+               <div className="pointer-events-auto">
                  <button 
                    onClick={handleNext}
-                   disabled={currentSpread >= entries.length - 1 || isAnimating || loading}
-                   className={`p-3 rounded-full bg-white shadow-lg text-slate-700 transition-all duration-200 ${currentSpread >= entries.length - 1 || isAnimating || loading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-50 hover:scale-110 active:scale-95'}`}
+                   disabled={(currentSpread >= entries.length - 1 && mobileSide === 'right') || isAnimating || loading}
+                   className={`p-3 rounded-full bg-white shadow-lg text-slate-700 transition-all duration-200 ${(currentSpread >= entries.length - 1 && mobileSide === 'right') || isAnimating || loading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-50 hover:scale-110 active:scale-95'}`}
                  >
                    <ChevronRight size={24} />
                  </button>
