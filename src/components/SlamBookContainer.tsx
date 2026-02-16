@@ -325,7 +325,7 @@ const EditablePageContent: React.FC<{
         <div className="relative mb-2">
            <div className="bg-white p-3 shadow relative border border-slate-100">
              <div className="absolute -left-2 top-4 w-4 h-full border-r-2 border-dotted border-slate-300/50" />
-             <span className="font-typewriter font-bold text-pink-600 text-xs uppercase block mb-1">Best School Memory:</span>
+             <span className="font-typewriter font-bold text-pink-600 text-xs uppercase block mb-1">Best Memory:</span>
              <textarea
                value={entry.schoolMemory}
                onChange={(e) => handleChange('schoolMemory', e.target.value)}
