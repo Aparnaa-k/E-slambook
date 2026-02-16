@@ -36,13 +36,15 @@ export interface FriendEntry {
   stickers: string[];
   isLocked?: boolean;
   password?: string;
+  mobileNumber?: string;
 }
 
-const EMPTY_ENTRY: FriendEntry = {
+const getEmptyEntry = (): FriendEntry => ({
   id: '',
   name: '',
   nickname: '',
   zodiac: '',
+  mobileNumber: '',
   favorites: {
     color: '',
     food: '',
@@ -62,7 +64,7 @@ const EMPTY_ENTRY: FriendEntry = {
   stickers: ['✨', '🎈'],
   isLocked: false,
   password: ''
-};
+});
 
 interface SlamBookContainerProps {
   coverImage?: string;
@@ -325,6 +327,17 @@ const EditablePageContent: React.FC<{
                   />
                </div>
             </div>
+            
+            <div className="flex items-center gap-2 mt-2 w-full">
+               <span className="font-typewriter text-slate-500 text-[10px] md:text-xs uppercase tracking-wide shrink-0">Mobile:</span>
+               <input
+                 type="tel"
+                 value={entry.mobileNumber || ''}
+                 onChange={(e) => handleChange('mobileNumber', e.target.value)}
+                 placeholder="Optional"
+                 className="font-handwriting text-lg md:text-xl text-slate-600 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-indigo-400 focus:outline-none w-full"
+               />
+            </div>
           </div>
         </div>
 
@@ -393,6 +406,7 @@ const EditablePageContent: React.FC<{
 
         {/* Secret Flap */}
         <SecretFlap 
+          key={entry.id}
           value={entry.secretMessage} 
           onChange={(val) => handleChange('secretMessage', val)} 
         />
@@ -461,6 +475,7 @@ const EditablePageContent: React.FC<{
                   <PenTool size={10} className="text-slate-300" />
               </div>
               <SignaturePad 
+                 key={entry.id}
                  value={entry.signature}
                  onChange={(val) => handleChange('signature', val)}
               />
@@ -691,7 +706,7 @@ export const SlamBookContainer: React.FC<SlamBookContainerProps> = ({ coverImage
 
   const handleAddPage = () => {
     const newId = crypto.randomUUID();
-    const newEntry = { ...EMPTY_ENTRY, id: newId };
+    const newEntry = { ...getEmptyEntry(), id: newId };
     setEntries([...entries, newEntry]);
     setTimeout(() => {
       setCurrentSpread(entries.length); 
@@ -982,8 +997,59 @@ export const SlamBookContainer: React.FC<SlamBookContainerProps> = ({ coverImage
         )}
 
         {!isOpen ? (
-          <div className="w-full flex justify-center animate-book-appear p-4">
-            <BookCover onOpen={() => setIsOpen(true)} coverImage={coverImage} />
+          <div className="w-full flex flex-col items-center justify-center animate-book-appear p-4 gap-6 min-h-[60vh]">
+            <div className="flex flex-col md:flex-row items-center justify-center gap-8 md:gap-16 w-full max-w-4xl">
+                <BookCover onOpen={() => setIsOpen(true)} coverImage={coverImage} />
+                
+                <div className="flex flex-col gap-6 items-center">
+                    <button 
+                        onClick={() => {
+                            handleAddPage();
+                            setIsOpen(true);
+                        }}
+                        className="px-8 py-3 bg-white text-indigo-600 rounded-full shadow-xl hover:bg-indigo-50 text-lg font-bold flex items-center gap-2 transition-all hover:scale-105 active:scale-95 border-2 border-indigo-100 group"
+                    >
+                        <div className="bg-indigo-100 p-1 rounded-full group-hover:bg-indigo-200 transition-colors">
+                            <Plus size={20} />
+                        </div>
+                        <span>Sign the Book</span>
+                    </button>
+
+                    {/* Table of Contents / Friends List */}
+                    {entries.length > 0 && (
+                        <div className="bg-white p-1 rounded shadow-lg border border-slate-200 w-full max-w-[280px] relative transform rotate-1">
+                             <div className="bg-slate-50 border border-slate-100 p-4 rounded-sm max-h-[300px] overflow-y-auto custom-scrollbar">
+                                 <div className="flex items-center justify-between mb-3 border-b-2 border-slate-200 pb-2">
+                                     <h3 className="font-typewriter font-bold text-slate-600 uppercase tracking-widest text-xs">Classmates</h3>
+                                     <span className="bg-yellow-200 text-yellow-800 text-[10px] px-1.5 py-0.5 rounded font-bold">{entries.length}</span>
+                                 </div>
+                                 
+                                 <ul className="space-y-1">
+                                    {entries.map((entry, idx) => (
+                                        <li key={entry.id}>
+                                            <button 
+                                                onClick={() => {
+                                                    setCurrentSpread(idx);
+                                                    setIsOpen(true);
+                                                    setMobileSide('left');
+                                                }}
+                                                className="w-full text-left font-handwriting text-xl text-slate-600 hover:text-indigo-600 hover:translate-x-1 transition-all flex items-center gap-2 group p-1 hover:bg-slate-100/50 rounded"
+                                            >
+                                                <span className="w-6 h-6 flex items-center justify-center bg-slate-100 text-slate-400 text-[10px] font-sans rounded-full group-hover:bg-indigo-100 group-hover:text-indigo-500 transition-colors">
+                                                    {idx + 1}
+                                                </span>
+                                                <span className="truncate flex-1">{entry.name || "Anonymous"}</span>
+                                                {entry.isLocked && <Lock size={12} className="text-slate-300" />}
+                                            </button>
+                                        </li>
+                                    ))}
+                                 </ul>
+                             </div>
+                             <Tape className="-top-3 left-1/2 -translate-x-1/2 rotate-2 opacity-80" />
+                        </div>
+                    )}
+                </div>
+            </div>
           </div>
         ) : (
           <div 
