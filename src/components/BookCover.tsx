@@ -75,7 +75,7 @@ export const BookCover: React.FC<BookCoverProps> = ({ onOpen, coverImage }) => {
                 <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-pink-400/80 w-24 h-6 transform -rotate-2" /> {/* Washi Tape */}
                 <p className="font-typewriter text-xs text-center text-slate-500 mb-1">THIS BOOK BELONGS TO:</p>
                 <div className="font-handwriting text-2xl text-center text-indigo-800 border-b-2 border-dotted border-indigo-300 min-h-[30px]">
-                   You!
+                   Aparnaa!
                 </div>
             </div>
 
